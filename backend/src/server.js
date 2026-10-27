@@ -1,3 +1,4 @@
+
 require("dotenv").config({
   path: require("path").join(__dirname, "../.env"),
 });
@@ -32,8 +33,15 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests without an Origin header, such as server-to-server requests
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow requests without an Origin header
+      const isAllowed =
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        /^https:\/\/[a-z0-9-]+-your-divine-store\.sumitxsingh01\.workers\.dev$/.test(
+          origin
+        );
+
+      if (isAllowed) {
         return callback(null, true);
       }
 
