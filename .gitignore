@@ -1,0 +1,39 @@
+﻿# Secrets and environment files
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+@'
+
+# Local migration backups and temporary test scripts
+backend/migration-backup/
+backend/src/routes/paymentRoutes.backup.js
+backend/test-product.js
+App-source.txt
+.vscode/
+'@ | Add-Content .gitignore
+# Local migration backups and temporary test scripts
+backend/migration-backup/
+backend/src/routes/paymentRoutes.backup.js
+backend/test-product.js
+App-source.txt
+.vscode/
