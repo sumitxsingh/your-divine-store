@@ -18,31 +18,55 @@ const {
 
 const app = express();
 
-// 1. CORS configuration
+// Allowed frontend origins
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
+  "https://your-divine-store.sumitxsingh01.workers.dev",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
+// CORS middleware — must run before API routes
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-      "http://localhost:5174",
-      "http://127.0.0.1:5174",
-      process.env.FRONTEND_URL,
-    ].filter(Boolean),
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    origin: function (origin, callback) {
+      // Allow requests without an Origin header, such as server-to-server requests
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.warn("CORS blocked origin:", origin);
+      return callback(new Error("Origin not allowed by CORS"));
+    },
+    methods: [
+      "GET",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE",
+      "OPTIONS",
+    ],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+    ],
+    credentials: false,
+    optionsSuccessStatus: 204,
   })
 );
 
-// 2. Preserve the raw body for Razorpay webhook signature verification
+// Preserve raw body for Razorpay webhook signature verification
 app.use(
   "/api/payments/webhook",
   express.raw({ type: "application/json" })
 );
 
-// 3. Parse JSON for all other API routes
+// Parse JSON for other API routes
 app.use(express.json());
 
-// 3. Home route
+// Home route
 app.get("/", (req, res) => {
   res.json({
     success: true,
@@ -50,7 +74,7 @@ app.get("/", (req, res) => {
   });
 });
 
-// 4. Health route
+// Health route
 app.get("/api/health", (req, res) => {
   res.json({
     success: true,
@@ -62,14 +86,14 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// 5. Mount API routes
+// Mount API routes
 app.use("/api/payments", paymentRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/images", imageRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 
-// 6. Start server after MongoDB connects
+// Start server after MongoDB connects
 async function startServer() {
   try {
     if (!process.env.MONGODB_URI) {
@@ -79,7 +103,6 @@ async function startServer() {
     await mongoose.connect(process.env.MONGODB_URI);
     console.log("MongoDB connected successfully");
 
-    // Release expired Razorpay reservations
     async function cleanupExpiredReservations() {
       try {
         const releasedCount = await releaseExpiredReservations();
@@ -100,20 +123,19 @@ async function startServer() {
     // Run cleanup once after connecting
     await cleanupExpiredReservations();
 
-    // Run cleanup every 60 seconds
+    // Repeat cleanup every 60 seconds
     const reservationCleanupTimer = setInterval(
       cleanupExpiredReservations,
       60 * 1000
     );
 
-    // Timer should not keep Node.js alive by itself
     reservationCleanupTimer.unref();
 
-    // Start HTTP server
+    // Render provides PORT automatically
     const port = process.env.PORT || 5000;
 
-    app.listen(port, () => {
-      console.log(`API running at http://localhost:${port}`);
+    app.listen(port, "0.0.0.0", () => {
+      console.log(`API server listening on port ${port}`);
     });
   } catch (error) {
     console.error("Startup failed:", error.message);
