@@ -60,7 +60,10 @@ function formatProduct(product) {
     price: Number(product.price) || 0,
     stock: Math.max(0, Number(product.stock) || 0),
     oldPrice: Number(product.originalPrice ?? product.price),
-    image: product.image || product.images?.[0] || "",
+    image: (product.image || product.images?.[0] || "").replace(
+    /^http:\/\//,
+    "https://"
+    ),
     images: Array.isArray(product.images) ? product.images : [],
     tag: product.tag || "",
   };
