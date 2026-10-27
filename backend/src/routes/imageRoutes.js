@@ -149,7 +149,7 @@ router.post("/upload", requireAdmin, (req, res) => {
         });
 
         const imageUrl =
-          `${req.protocol}://${req.get("host")}/api/images/${stream.id}`;
+          `${process.env.BACKEND_URL || "https://your-divine-store.onrender.com"}/api/images/${stream.id}`;
 
         uploaded.push({
           image: imageUrl,
