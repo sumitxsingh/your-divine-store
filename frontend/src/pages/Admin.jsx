@@ -1092,7 +1092,11 @@ export default function Admin() {
                   <div className="admin-order-bottom">
                     <div>
                       <p className="admin-order-payment">
-                        Payment: {order.paymentMethod || "COD"}
+                        Payment Method: {order.paymentMethod || "COD"}
+                      </p>
+
+                      <p className="admin-order-payment">
+                        Payment Status: {order.paymentStatus || "Pending"}
                       </p>
                       <span className="admin-order-total-label">
                         Order Total
