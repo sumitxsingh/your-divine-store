@@ -202,8 +202,17 @@ router.post("/create-order", async (req, res) => {
       }
 
       // Current store checkout has free shipping.
-      const shippingCharge = 0;
-      const totalPaise = subtotalPaise;
+      const FREE_SHIPPING_THRESHOLD_PAISE = 59900;
+      const SHIPPING_CHARGE_PAISE = 4900;
+
+      const shippingChargePaise =
+        subtotalPaise >= FREE_SHIPPING_THRESHOLD_PAISE
+          ? 0
+          : SHIPPING_CHARGE_PAISE;
+
+      const totalPaise = subtotalPaise + shippingChargePaise;
+
+      const shippingCharge = shippingChargePaise / 100;
 
       if (totalPaise <= 0 || !Number.isSafeInteger(totalPaise)) {
         throw httpError(400, "Order total must be greater than zero.");

@@ -124,7 +124,12 @@ router.post("/", async (req, res) => {
         });
       }
 
-      const shippingCharge = 0;
+      const FREE_SHIPPING_THRESHOLD = 599;
+      const SHIPPING_CHARGE = 49;
+
+      const shippingCharge =
+        subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_CHARGE;
+
       const totalAmount = subtotal + shippingCharge;
 
       const orderNumber =
