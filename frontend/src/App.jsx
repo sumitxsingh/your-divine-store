@@ -30,6 +30,9 @@ const categories = [
 const CART_KEY = "yds-cart";
 const WISHLIST_KEY = "yds-wishlist";
 
+const FREE_SHIPPING_THRESHOLD = 599;
+const SHIPPING_CHARGE = 49;
+
 const EMPTY_CUSTOMER = {
   name: "",
   phone: "",
@@ -61,8 +64,8 @@ function formatProduct(product) {
     stock: Math.max(0, Number(product.stock) || 0),
     oldPrice: Number(product.originalPrice ?? product.price),
     image: (product.image || product.images?.[0] || "").replace(
-    /^http:\/\//,
-    "https://"
+      /^http:\/\//,
+      "https://"
     ),
     images: Array.isArray(product.images) ? product.images : [],
     tag: product.tag || "",
@@ -267,6 +270,11 @@ export default function App() {
     0
   );
 
+  const shippingCharge =
+    cartTotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_CHARGE;
+
+  const orderTotal = cartTotal + shippingCharge;
+
   function addToCart(product) {
     if (product.stock <= 0) {
       showNotice("This product is currently out of stock.");
@@ -381,8 +389,9 @@ export default function App() {
 
     setCheckoutLoading(true);
 
-    const apiBase =
-      import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+    const apiBase = (
+      import.meta.env.VITE_API_BASE_URL || "http://localhost:5000"
+    ).replace(/\/+$/, "");
 
     const orderPayload = {
       customer: {
@@ -1013,6 +1022,18 @@ export default function App() {
                 <strong>{formatPrice(cartTotal)}</strong>
               </div>
 
+              <div className="cart-total">
+                <span>Shipping</span>
+                <strong>
+                  {shippingCharge === 0 ? "FREE" : formatPrice(shippingCharge)}
+                </strong>
+              </div>
+
+              <div className="cart-total">
+                <span>Total</span>
+                <strong>{formatPrice(orderTotal)}</strong>
+              </div>
+
               <button
                 type="button"
                 className="primary-button checkout-button"
@@ -1022,7 +1043,11 @@ export default function App() {
               </button>
 
               <p className="checkout-note">
-                Shipping and payment options will be calculated at checkout.
+                {cartTotal < FREE_SHIPPING_THRESHOLD
+                  ? `Add ${formatPrice(
+                      FREE_SHIPPING_THRESHOLD - cartTotal
+                    )} more to get free shipping.`
+                  : "Congratulations! You qualify for free shipping."}
               </p>
             </div>
           )}
@@ -1178,7 +1203,7 @@ export default function App() {
                     <strong>Cash on Delivery</strong>
                     <p>Pay when your order arrives.</p>
                   </div>
-                  <strong>{formatPrice(cartTotal)}</strong>
+                  <strong>{formatPrice(orderTotal)}</strong>
                 </label>
 
                 <label
@@ -1199,8 +1224,37 @@ export default function App() {
                     <strong>Online Payment</strong>
                     <p>UPI, cards and other available methods via Razorpay.</p>
                   </div>
-                  <strong>{formatPrice(cartTotal)}</strong>
+                  <strong>{formatPrice(orderTotal)}</strong>
                 </label>
+              </div>
+
+              <div className="checkout-order-summary">
+                <div className="cart-total">
+                  <span>Subtotal</span>
+                  <strong>{formatPrice(cartTotal)}</strong>
+                </div>
+
+                <div className="cart-total">
+                  <span>Shipping</span>
+                  <strong>
+                    {shippingCharge === 0
+                      ? "FREE"
+                      : formatPrice(shippingCharge)}
+                  </strong>
+                </div>
+
+                <div className="cart-total">
+                  <span>Total payable</span>
+                  <strong>{formatPrice(orderTotal)}</strong>
+                </div>
+
+                <p className="checkout-note">
+                  {cartTotal < FREE_SHIPPING_THRESHOLD
+                    ? `Add ${formatPrice(
+                        FREE_SHIPPING_THRESHOLD - cartTotal
+                      )} more to get free shipping.`
+                    : "Congratulations! You qualify for free shipping."}
+                </p>
               </div>
 
               {checkoutError && (
