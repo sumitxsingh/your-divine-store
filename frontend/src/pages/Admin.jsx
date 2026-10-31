@@ -988,6 +988,23 @@ export default function Admin() {
               const orderId = order._id || order.id || order.orderNumber;
               const currentStatus = order.status || "Placed";
 
+              const refundStatus = order.refundStatus || "NotRequired";
+
+              const hasRefund =
+                order.paymentMethod === "Razorpay" &&
+                refundStatus !== "NotRequired";
+
+              const refundStatusClass = `refund-${refundStatus.toLowerCase()}`;
+
+              const refundDate =
+                order.refundRequestedAt &&
+                !Number.isNaN(new Date(order.refundRequestedAt).getTime())
+                  ? new Date(order.refundRequestedAt).toLocaleString("en-IN", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })
+                  : "Not available";
+              
               const nextStatuses = {
                 Placed: ["Confirmed", "Cancelled"],
                 Confirmed: ["Shipped", "Cancelled"],
@@ -1088,6 +1105,53 @@ export default function Admin() {
                       </div>
                     ))}
                   </div>
+
+                  {hasRefund && (
+                    <div className="admin-refund-section">
+                      <div className="admin-refund-heading">
+                        <h4>Refund Details</h4>
+
+                        <span className={`admin-refund-status ${refundStatusClass}`}>
+                          {refundStatus}
+                        </span>
+                      </div>
+
+                      <div className="admin-refund-grid">
+                        <div>
+                          <span>Refund Amount</span>
+                          <strong>
+                            ₹
+                            {(Number(order.refundAmount || 0) / 100).toLocaleString(
+                              "en-IN",
+                              {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              }
+                            )}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>Refund ID</span>
+                          <strong className="admin-refund-id">
+                            {order.razorpayRefundId || "Awaiting confirmation"}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>Requested On</span>
+                          <strong>{refundDate}</strong>
+                        </div>
+
+                        {order.refundError && (
+                          <div className="admin-refund-error">
+                            <span>Refund Message</span>
+                            <strong>{order.refundError}</strong>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="admin-order-bottom">
                     <div>

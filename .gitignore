@@ -1,4 +1,4 @@
-﻿# Secrets and environment files
+# Secrets and environment files
 .env
 .env.*
 !.env.example
@@ -22,18 +22,11 @@ npm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
-@'
 
-# Local migration backups and temporary test scripts
+# Local backup files
+backend/src/routes/paymentRoutes.js.backup
+.vscode/
+App-source.txt
+backend/test-product.js
 backend/migration-backup/
 backend/src/routes/paymentRoutes.backup.js
-backend/test-product.js
-App-source.txt
-.vscode/
-'@ | Add-Content .gitignore
-# Local migration backups and temporary test scripts
-backend/migration-backup/
-backend/src/routes/paymentRoutes.backup.js
-backend/test-product.js
-App-source.txt
-.vscode/

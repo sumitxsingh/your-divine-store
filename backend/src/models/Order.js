@@ -140,6 +140,43 @@ stockReserved: {
       default: "Pending",
     },
 
+    razorpayPaymentId: {
+      type: String,
+      default: null,
+    },
+
+    refundStatus: {
+      type: String,
+      enum: ["NotRequired", "Pending", "Processing", "Processed", "Failed"],
+      default: "NotRequired",
+    },
+
+    razorpayRefundId: {
+      type: String,
+      default: null,
+    },
+
+    refundAmount: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    refundRequestedAt: {
+      type: Date,
+      default: null,
+    },
+
+    refundError: {
+      type: String,
+      default: "",
+    },
+    
+    refundIdempotencyKey: {
+      type: String,
+      default: null,
+    },
+
     status: {
       type: String,
       enum: [

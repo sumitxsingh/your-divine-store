@@ -1,7 +1,7 @@
 
 const express = require("express");
 const mongoose = require("mongoose");
-
+const { claimRefund } = require("../services/refundService");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const requireAdmin = require("../middleware/authMiddleware");
@@ -10,11 +10,7 @@ const router = express.Router();
 
 // Create a COD order and reduce product stock.
 router.post("/", async (req, res) => {
-  const {
-    customer,
-    shippingAddress,
-    items,
-  } = req.body;
+  const { customer, shippingAddress, items } = req.body || {};
 
   if (
     !customer?.name?.trim() ||
@@ -44,8 +40,8 @@ router.post("/", async (req, res) => {
   const quantitiesByProduct = new Map();
 
   for (const item of items) {
-    const productId = String(item.productId || "");
-    const quantity = Number(item.quantity);
+    const productId = String(item?.productId || "");
+    const quantity = Number(item?.quantity);
 
     if (!mongoose.isValidObjectId(productId)) {
       return res.status(400).json({
@@ -114,6 +110,10 @@ router.post("/", async (req, res) => {
         const itemSubtotal = price * quantity;
         subtotal += itemSubtotal;
 
+        if (!Number.isFinite(subtotal)) {
+          throw new Error("Order amount is too large.");
+        }
+
         orderItems.push({
           productId: product._id,
           name: product.name,
@@ -128,9 +128,17 @@ router.post("/", async (req, res) => {
       const SHIPPING_CHARGE = 49;
 
       const shippingCharge =
-        subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_CHARGE;
+        subtotal >= FREE_SHIPPING_THRESHOLD
+          ? 0
+          : SHIPPING_CHARGE;
 
       const totalAmount = subtotal + shippingCharge;
+
+      if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+        const error = new Error("Order total must be greater than zero.");
+        error.statusCode = 400;
+        throw error;
+      }
 
       const orderNumber =
         `YDS-${Date.now()}-${Math.random()
@@ -161,6 +169,7 @@ router.post("/", async (req, res) => {
             paymentMethod: "COD",
             paymentStatus: "Pending",
             status: "Placed",
+            stockReserved: false,
             stockRestocked: false,
           },
         ],
@@ -212,7 +221,8 @@ router.get("/", requireAdmin, async (req, res) => {
   }
 });
 
-// Admin: update status and restore stock when cancelling.
+// Admin: update status, restore stock when cancelling,
+// and trigger Razorpay refund if payment was captured.
 router.patch("/:id/status", requireAdmin, async (req, res) => {
   let session;
 
@@ -224,7 +234,7 @@ router.patch("/:id/status", requireAdmin, async (req, res) => {
       });
     }
 
-    const { status } = req.body;
+    const { status } = req.body || {};
 
     const allowedStatuses = [
       "Confirmed",
@@ -243,6 +253,7 @@ router.patch("/:id/status", requireAdmin, async (req, res) => {
     session = await mongoose.startSession();
 
     let updatedOrder;
+    let refundResult = null;
 
     await session.withTransaction(async () => {
       const order = await Order.findById(req.params.id).session(session);
@@ -261,57 +272,91 @@ router.patch("/:id/status", requireAdmin, async (req, res) => {
         Cancelled: [],
       };
 
-	if (
-  order.paymentMethod === "Razorpay" &&
-  order.paymentStatus !== "Paid" &&
-  status !== "Cancelled"
-) {
-  const error = new Error(
-    "Razorpay payment must be verified before confirming or shipping this order."
-  );
-  error.statusCode = 409;
-  throw error;
-}
+      if (
+        order.paymentMethod === "Razorpay" &&
+        order.paymentStatus !== "Paid" &&
+        status !== "Cancelled"
+      ) {
+        const error = new Error(
+          "Razorpay payment must be verified before confirming or shipping this order."
+        );
+
+        error.statusCode = 409;
+        throw error;
+      }
 
       if (!transitions[order.status]?.includes(status)) {
         const error = new Error(
           `Cannot change order status from ${order.status} to ${status}.`
         );
+
         error.statusCode = 409;
         throw error;
       }
 
-      if (status === "Cancelled" && !order.stockRestocked) {
-        for (const item of order.items) {
-          const result = await Product.updateOne(
-            { _id: item.productId },
-            { $inc: { stock: item.quantity } },
-            { session }
-          );
-
-          if (result.matchedCount !== 1) {
-            throw new Error(
-              `Product not found while restoring stock: ${item.name}`
+      // Restore stock only once when cancelling.
+      if (status === "Cancelled") {
+        if (!order.stockRestocked) {
+          for (const item of order.items) {
+            const result = await Product.updateOne(
+              { _id: item.productId },
+              { $inc: { stock: item.quantity } },
+              { session }
             );
+
+            if (result.matchedCount !== 1) {
+              throw new Error(
+                `Product not found while restoring stock: ${item.name}`
+              );
+            }
           }
+
+          order.stockRestocked = true;
         }
 
-        order.stockRestocked = true;
+        // A cancelled order must not retain an active reservation.
+        order.stockReserved = false;
       }
 
       order.status = status;
+
       await order.save({ session });
 
-      updatedOrder = order.toObject();
+      updatedOrder = order;
     });
+
+    // Trigger refund only after the cancellation transaction commits.
+    if (
+      status === "Cancelled" &&
+      updatedOrder.paymentMethod === "Razorpay" &&
+      updatedOrder.paymentStatus === "Paid"
+    ) {
+      try {
+        refundResult = await claimRefund(updatedOrder._id);
+      } catch (refundErr) {
+        // Cancellation and stock restoration are already committed.
+        console.error(
+          "Razorpay refund trigger error:",
+          refundErr.message
+        );
+
+        refundResult = {
+          required: true,
+          pending: true,
+          message:
+            "Refund needs reconciliation. Check the order and Razorpay Dashboard before retrying.",
+        };
+      }
+    }
 
     return res.json({
       success: true,
       message:
         status === "Cancelled"
-          ? "Order cancelled and stock restored successfully."
+          ? "Order cancelled and stock restored. Check the refund field for its current status."
           : "Order status updated successfully.",
-      order: updatedOrder,
+      order: updatedOrder.toObject(),
+      refund: refundResult,
     });
   } catch (error) {
     console.error("Order status update failed:", error.message);

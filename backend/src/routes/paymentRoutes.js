@@ -22,9 +22,11 @@ function newOrderNumber() {
 }
 
 function validText(value, maxLength = 200) {
-  return typeof value === "string" &&
+  return (
+    typeof value === "string" &&
     value.trim().length > 0 &&
-    value.trim().length <= maxLength;
+    value.trim().length <= maxLength
+  );
 }
 
 function validCustomerAndAddress(customer, address) {
@@ -43,8 +45,7 @@ function validCustomerAndAddress(customer, address) {
   );
 }
 
-// Restores reserved inventory and cancels a still-pending order exactly once.
-// The conditional order update and stock restoration share one transaction.
+// Restore reserved inventory and cancel a pending order exactly once.
 async function cancelAndReleaseReservation(orderId) {
   const session = await mongoose.startSession();
 
@@ -79,7 +80,9 @@ async function cancelAndReleaseReservation(orderId) {
         );
 
         if (result.matchedCount !== 1) {
-          throw new Error(`Product missing while restoring stock: ${item.productId}`);
+          throw new Error(
+            `Product missing while restoring stock: ${item.productId}`
+          );
         }
       }
     });
@@ -88,8 +91,7 @@ async function cancelAndReleaseReservation(orderId) {
   }
 }
 
-// Create a local order and reserve stock first.
-// The Razorpay API call is deliberately outside the MongoDB transaction.
+// CREATE RAZORPAY ORDER
 router.post("/create-order", async (req, res) => {
   const { customer, shippingAddress, items } = req.body || {};
 
@@ -126,6 +128,7 @@ router.post("/create-order", async (req, res) => {
   }
 
   let razorpay;
+
   try {
     razorpay = getRazorpayClient();
   } catch {
@@ -135,7 +138,7 @@ router.post("/create-order", async (req, res) => {
     });
   }
 
-  // Combine duplicate cart lines before checking/reserving inventory.
+  // Combine duplicate cart lines.
   const quantities = new Map();
 
   for (const item of items) {
@@ -175,7 +178,11 @@ router.post("/create-order", async (req, res) => {
         }
 
         const stockUpdate = await Product.updateOne(
-          { _id: product._id, stock: { $gte: quantity }, isActive: { $ne: false } },
+          {
+            _id: product._id,
+            stock: { $gte: quantity },
+            isActive: { $ne: false },
+          },
           { $inc: { stock: -quantity } },
           { session }
         );
@@ -201,7 +208,6 @@ router.post("/create-order", async (req, res) => {
         });
       }
 
-      // Current store checkout has free shipping.
       const FREE_SHIPPING_THRESHOLD_PAISE = 59900;
       const SHIPPING_CHARGE_PAISE = 4900;
 
@@ -211,8 +217,6 @@ router.post("/create-order", async (req, res) => {
           : SHIPPING_CHARGE_PAISE;
 
       const totalPaise = subtotalPaise + shippingChargePaise;
-
-      const shippingCharge = shippingChargePaise / 100;
 
       if (totalPaise <= 0 || !Number.isSafeInteger(totalPaise)) {
         throw httpError(400, "Order total must be greater than zero.");
@@ -236,7 +240,7 @@ router.post("/create-order", async (req, res) => {
             },
             items: orderItems,
             subtotal: subtotalPaise / 100,
-            shippingCharge,
+            shippingCharge: shippingChargePaise / 100,
             totalAmount: totalPaise / 100,
             paymentMethod: "Razorpay",
             paymentStatus: "Pending",
@@ -289,7 +293,6 @@ router.post("/create-order", async (req, res) => {
     );
 
     if (!savedOrder) {
-      // The reservation expired or was cancelled while Razorpay was responding.
       return res.status(409).json({
         success: false,
         message: "The reservation expired. Please create a new order.",
@@ -321,7 +324,7 @@ router.post("/create-order", async (req, res) => {
   }
 });
 
-// Verify the checkout signature, then independently confirm payment with Razorpay.
+// VERIFY CHECKOUT PAYMENT
 router.post("/verify", async (req, res) => {
   const {
     orderId,
@@ -343,7 +346,17 @@ router.post("/verify", async (req, res) => {
     });
   }
 
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+
+  if (!secret) {
+    return res.status(503).json({
+      success: false,
+      message: "Online payment is not configured.",
+    });
+  }
+
   let razorpay;
+
   try {
     razorpay = getRazorpayClient();
   } catch {
@@ -367,7 +380,6 @@ router.post("/verify", async (req, res) => {
       });
     }
 
-    const secret = process.env.RAZORPAY_KEY_SECRET;
     const expected = crypto
       .createHmac("sha256", secret)
       .update(`${razorpayOrderId}|${razorpayPaymentId}`)
@@ -385,11 +397,9 @@ router.post("/verify", async (req, res) => {
       });
     }
 
-    // Do not trust the browser alone: confirm the payment belongs to this
-    // Razorpay order and has actually been captured.
     const payment = await razorpay.payments.fetch(razorpayPaymentId);
-
     if (
+      payment.id !== razorpayPaymentId ||
       payment.order_id !== razorpayOrderId ||
       payment.status !== "captured" ||
       payment.amount !== Math.round(order.totalAmount * 100) ||
@@ -402,6 +412,7 @@ router.post("/verify", async (req, res) => {
     }
 
     const session = await mongoose.startSession();
+    let alreadyPaid = false;
 
     try {
       await session.withTransaction(async () => {
@@ -411,29 +422,51 @@ router.post("/verify", async (req, res) => {
             paymentMethod: "Razorpay",
             razorpayOrderId,
             paymentStatus: "Pending",
-            status: { $ne: "Cancelled" },
+            status: "Placed",
             stockReserved: true,
             stockRestocked: false,
             reservationExpiresAt: { $gt: new Date() },
           },
-          { $set: { paymentStatus: "Paid" } },
+          {
+            $set: {
+              paymentStatus: "Paid",
+              razorpayPaymentId,
+            },
+          },
           { new: true, session }
         );
 
-        if (!paidOrder) {
-          throw httpError(
-            409,
-            "Reservation expired or order is no longer payable. Contact support if money was deducted."
-          );
+        if (paidOrder) {
+          return;
         }
+
+        // Webhook may have processed this exact payment first.
+        const existingPaidOrder = await Order.findOne({
+          _id: order._id,
+          paymentMethod: "Razorpay",
+          razorpayOrderId,
+          paymentStatus: "Paid",
+          razorpayPaymentId,
+        }).session(session);
+
+        if (existingPaidOrder) {
+          alreadyPaid = true;
+          return;
+        }
+
+        throw httpError(
+          409,
+          "Reservation expired or order is no longer payable. Contact support if money was deducted."
+        );
       });
     } finally {
       await session.endSession();
     }
-
     return res.json({
       success: true,
-      message: "Payment verified successfully.",
+      message: alreadyPaid
+        ? "Payment was already verified successfully."
+        : "Payment verified successfully.",
       orderId: String(order._id),
       orderNumber: order.orderNumber,
       paymentStatus: "Paid",
@@ -455,12 +488,8 @@ router.post("/verify", async (req, res) => {
   }
 });
 
-
-/**
- * Razorpay webhook.
- * Requires express.raw() middleware before express.json() in server.js.
- * Uses RAZORPAY_WEBHOOK_SECRET, NOT RAZORPAY_KEY_SECRET.
- */
+// RAZORPAY WEBHOOK
+// server.js must apply express.raw() before express.json() for this route.
 router.post("/webhook", async (req, res) => {
   const rawBody = req.body;
   const signature = req.get("x-razorpay-signature");
@@ -480,6 +509,8 @@ router.post("/webhook", async (req, res) => {
     });
   }
 
+  let event;
+
   try {
     const expected = crypto
       .createHmac("sha256", webhookSecret)
@@ -498,9 +529,127 @@ router.post("/webhook", async (req, res) => {
       });
     }
 
-    const event = JSON.parse(rawBody.toString("utf8"));
+    event = JSON.parse(rawBody.toString("utf8"));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid webhook JSON.",
+      });
+    }
 
-    // Only captured payments can mark an order as paid.
+    console.error("Webhook signature verification failed:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Webhook verification failed.",
+    });
+  }
+
+  try {
+    // HANDLE REFUND EVENTS
+    if (
+      event.event === "refund.processed" ||
+      event.event === "refund.failed"
+    ) {
+      const refund = event.payload?.refund?.entity;
+
+      const expectedStatus =
+        event.event === "refund.processed" ? "processed" : "failed";
+
+      if (
+        !refund?.id ||
+        !refund?.payment_id ||
+        refund.status !== expectedStatus ||
+        !Number.isSafeInteger(refund.amount) ||
+        refund.amount <= 0 ||
+        refund.currency !== "INR"
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid refund webhook payload.",
+        });
+      }
+
+      const refundUpdate =
+        expectedStatus === "processed"
+          ? {
+              $set: {
+                refundStatus: "Processed",
+                razorpayRefundId: refund.id,
+                refundError: "",
+              },
+            }
+          : {
+              $set: {
+                refundStatus: "Failed",
+                razorpayRefundId: refund.id,
+                refundError: String(
+                  refund.error_description ||
+                    refund.error_reason ||
+                    "Razorpay reported that the refund failed."
+                ).slice(0, 500),
+              },
+            };
+
+      const updatedOrder = await Order.findOneAndUpdate(
+        {
+          razorpayPaymentId: refund.payment_id,
+          paymentMethod: "Razorpay",
+          paymentStatus: "Paid",
+          status: "Cancelled",
+          refundAmount: refund.amount,
+          refundStatus: { $in: ["Processing", "Pending"] },
+          $or: [
+            { razorpayRefundId: null },
+            { razorpayRefundId: refund.id },
+          ],
+        },
+        refundUpdate,
+        { new: true }
+      );
+
+      if (!updatedOrder) {
+        const existingOrder = await Order.findOne({
+          razorpayPaymentId: refund.payment_id,
+          paymentMethod: "Razorpay",
+        });
+
+        if (
+          existingOrder?.refundStatus === "Processed" &&
+          existingOrder.razorpayRefundId === refund.id
+        ) {
+          return res.status(200).json({
+            success: true,
+            message: "Refund event already processed.",
+          });
+        }
+
+        console.error(
+          "Refund webhook needs manual reconciliation:",
+          refund.id,
+          refund.payment_id
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "Refund acknowledged for reconciliation.",
+        });
+      }
+
+      console.log(
+        "Razorpay refund status updated:",
+        updatedOrder.orderNumber,
+        updatedOrder.refundStatus
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Refund event processed.",
+      });
+    }
+
+    // IGNORE OTHER EVENTS
     if (event.event !== "payment.captured") {
       return res.status(200).json({
         success: true,
@@ -508,6 +657,9 @@ router.post("/webhook", async (req, res) => {
       });
     }
 
+    // HANDLE CAPTURED PAYMENT
+    
+    // HANDLE CAPTURED PAYMENT
     const payment = event.payload?.payment?.entity;
 
     if (
@@ -515,9 +667,9 @@ router.post("/webhook", async (req, res) => {
       !payment?.id ||
       payment.status !== "captured" ||
       !Number.isSafeInteger(payment.amount) ||
+      payment.amount <= 0 ||
       payment.currency !== "INR"
     ) {
-      console.error("Razorpay webhook contains invalid payment details.");
       return res.status(400).json({
         success: false,
         message: "Invalid captured-payment payload.",
@@ -536,13 +688,13 @@ router.post("/webhook", async (req, res) => {
         payment.id
       );
 
-      // Acknowledge to avoid endless retries. Investigate this payment manually.
       return res.status(200).json({
         success: true,
         message: "Payment acknowledged for reconciliation.",
       });
     }
 
+    // Verify exact amount.
     if (payment.amount !== Math.round(order.totalAmount * 100)) {
       console.error(
         "Captured payment amount mismatch:",
@@ -556,15 +708,30 @@ router.post("/webhook", async (req, res) => {
       });
     }
 
-    // Repeated delivery of an already-processed event is harmless.
+    // Handle duplicate payment events.
     if (order.paymentStatus === "Paid") {
+      if (order.razorpayPaymentId === payment.id) {
+        return res.status(200).json({
+          success: true,
+          message: "Payment already processed.",
+        });
+      }
+
+      console.error(
+        "Different captured payment found for an already-paid order:",
+        order.orderNumber,
+        payment.id
+      );
+
       return res.status(200).json({
         success: true,
-        message: "Payment already processed.",
+        message: "Payment acknowledged for reconciliation.",
       });
     }
 
+    // Update payment status atomically.
     const session = await mongoose.startSession();
+    let paymentUpdated = false;
 
     try {
       await session.withTransaction(async () => {
@@ -574,36 +741,32 @@ router.post("/webhook", async (req, res) => {
             razorpayOrderId: payment.order_id,
             paymentMethod: "Razorpay",
             paymentStatus: "Pending",
-            status: { $ne: "Cancelled" },
+            status: "Placed",
             stockReserved: true,
             stockRestocked: false,
             reservationExpiresAt: { $gt: new Date() },
           },
           {
-            $set: { paymentStatus: "Paid" },
+            $set: {
+              paymentStatus: "Paid",
+              razorpayPaymentId: payment.id,
+            },
           },
           { new: true, session }
         );
 
-        if (!updatedOrder) {
-          throw new Error("ORDER_REQUIRES_RECONCILIATION");
-        }
+        paymentUpdated = Boolean(updatedOrder);
       });
     } finally {
       await session.endSession();
     }
 
-    console.log("Razorpay webhook marked order paid:", order.orderNumber);
-
-    return res.status(200).json({
-      success: true,
-      message: "Payment processed.",
-    });
-  } catch (error) {
-    if (error.message === "ORDER_REQUIRES_RECONCILIATION") {
+    // Do not mark an expired, cancelled or otherwise ineligible order as Paid.
+    if (!paymentUpdated) {
       console.error(
         "Captured payment needs manual reconciliation:",
-        payment?.id
+        payment.id,
+        order.orderNumber
       );
 
       return res.status(200).json({
@@ -612,15 +775,26 @@ router.post("/webhook", async (req, res) => {
       });
     }
 
-    console.error("Razorpay webhook processing failed:", error.message);
+    console.log(
+      "Razorpay webhook marked order paid:",
+      order.orderNumber
+    );
 
-    // A server-side processing error can be retried by Razorpay.
+    return res.status(200).json({
+      success: true,
+      message: "Payment processed.",
+    });
+  } catch (error) {
+    console.error(
+      "Razorpay webhook processing failed:",
+      error.message
+    );
+
     return res.status(500).json({
       success: false,
       message: "Webhook processing failed.",
     });
   }
 });
-
 
 module.exports = router;

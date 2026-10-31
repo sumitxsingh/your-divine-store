@@ -492,6 +492,20 @@ export default function App() {
         throw new Error("Razorpay Checkout available nahi hai. Please retry.");
       }
 
+      // Step 2: validate create-order response before opening checkout.
+      if (
+        !created.success ||
+        !created.orderId ||
+        !created.orderNumber ||
+        !created.razorpayOrderId ||
+        !created.keyId ||
+        !Number.isSafeInteger(created.amount) ||
+        created.amount <= 0 ||
+        created.currency !== "INR"
+      ) {
+        throw new Error("Payment order response invalid. Please try again.");
+      }
+
       const options = {
         key: created.keyId,
         amount: created.amount,
@@ -534,15 +548,25 @@ export default function App() {
               );
             }
 
-            setPlacedOrder(
-              verified.order || {
-                _id: created.orderId,
-                orderNumber: created.orderNumber,
-                totalAmount: Number(created.amount || 0) / 100,
-                paymentMethod: "Razorpay",
-                paymentStatus: "Paid",
-              }
-            );
+            // Step 1: success screen only when backend confirms verification.
+            if (
+              verified.success !== true ||
+              verified.paymentStatus !== "Paid" ||
+              verified.orderId !== created.orderId ||
+              verified.orderNumber !== created.orderNumber
+            ) {
+              throw new Error(
+                "Payment confirmation incomplete. Please check your order status before retrying."
+              );
+            }
+
+            setPlacedOrder({
+              _id: verified.orderId,
+              orderNumber: verified.orderNumber,
+              totalAmount: Number(created.amount) / 100,
+              paymentMethod: "Razorpay",
+              paymentStatus: verified.paymentStatus,
+            });
             setCart([]);
             setCheckoutOpen(false);
             setCustomer({ ...EMPTY_CUSTOMER });

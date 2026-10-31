@@ -512,3 +512,94 @@
     width: 100%;
   }
 }
+/* Razorpay Refund Tracking */
+.admin-refund-section {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--admin-border);
+  border-radius: 10px;
+  background: #faf9f6;
+}
+
+.admin-refund-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 15px;
+}
+
+.admin-refund-heading h4 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--admin-ink);
+}
+
+.admin-refund-status {
+  display: inline-flex;
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.admin-refund-status.refund-processed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.admin-refund-status.refund-failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.admin-refund-status.refund-pending,
+.admin-refund-status.refund-processing {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.admin-refund-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.admin-refund-grid > div {
+  min-width: 0;
+}
+
+.admin-refund-grid span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--admin-muted);
+  font-size: 11px;
+}
+
+.admin-refund-grid strong {
+  display: block;
+  color: var(--admin-ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.admin-refund-id {
+  font-family: monospace;
+}
+
+.admin-refund-error {
+  grid-column: 1 / -1;
+}
+
+.admin-refund-error strong {
+  color: #b42318;
+}
+
+@media (max-width: 600px) {
+  .admin-refund-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

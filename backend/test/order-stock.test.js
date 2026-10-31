@@ -1,3 +1,7 @@
+const {
+  releaseExpiredReservations,
+} = require("../src/services/paymentReservationService");
+
 process.env.JWT_SECRET = "isolated-test-secret-key-at-least-32-characters";
 
 const mongoose = require("mongoose");
@@ -13,7 +17,7 @@ const app = express();
 app.use(express.json());
 app.use("/api/orders", orderRoutes);
 
-const uri = "mongodb://127.0.0.1:27018/testdb?replicaSet=testRs";
+const uri = "mongodb://127.0.0.1:27017/your_divine_store_test?replicaSet=rs0";
 
 let token;
 let product;
@@ -509,7 +513,7 @@ test("client price and total tampering are ignored", async () => {
   expect(order.items[0].quantity).toBe(2);
   expect(order.items[0].subtotal).toBe(598);
   expect(order.subtotal).toBe(598);
-  expect(order.totalAmount).toBe(598);
+  expect(order.totalAmount).toBe(647);
 
   const savedProduct = await Product.findById(product._id);
   expect(savedProduct.stock).toBe(8);
@@ -573,4 +577,63 @@ test("concurrent orders cannot oversell available stock", async () => {
   const savedProduct = await Product.findById(product._id);
   expect(savedProduct.stock).toBe(4);
   expect(await Order.countDocuments()).toBe(1);
+});
+
+test("concurrent admin cancellation and expired cleanup restore stock only once", async () => {
+  const order = await Order.create({
+    orderNumber: `YDS-RACE-${Date.now()}`,
+    customer: {
+      name: "Concurrency Test",
+      phone: "9999999999",
+      email: "",
+    },
+    shippingAddress: {
+      address: "Test Address",
+      city: "Test City",
+      state: "Jharkhand",
+      pincode: "825301",
+      country: "India",
+    },
+    items: [
+      {
+        productId: product._id,
+        name: product.name,
+        image: product.image || "",
+        price: 299,
+        quantity: 2,
+        subtotal: 598,
+      },
+    ],
+    subtotal: 598,
+    shippingCharge: 0,
+    totalAmount: 598,
+    paymentMethod: "Razorpay",
+    paymentStatus: "Pending",
+    razorpayOrderId: `order_race_${Date.now()}`,
+    status: "Placed",
+    stockReserved: true,
+    stockRestocked: false,
+    reservationExpiresAt: new Date(Date.now() - 60_000),
+  });
+
+  // Both operations attempt to cancel and restore the same reservation.
+  const [cancelResponse, cleanupResult] = await Promise.all([
+    request(app)
+      .patch(`/api/orders/${order._id}/status`)
+      .set({ Authorization: `Bearer ${token}` })
+      .send({ status: "Cancelled" }),
+
+    releaseExpiredReservations(),
+  ]);
+
+  expect(cancelResponse.status).toBe(200);
+  expect(cleanupResult).toBe(0);
+
+  const savedProduct = await Product.findById(product._id);
+  const savedOrder = await Order.findById(order._id);
+
+  expect(savedProduct.stock).toBe(12);
+  expect(savedOrder.status).toBe("Cancelled");
+  expect(savedOrder.stockReserved).toBe(false);
+  expect(savedOrder.stockRestocked).toBe(true);
 });
