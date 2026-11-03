@@ -109,6 +109,7 @@ async function startServer() {
     }
 
     await mongoose.connect(process.env.MONGODB_URI);
+    console.log("Connected MongoDB database:", mongoose.connection.name);
     console.log("MongoDB connected successfully");
 
     async function cleanupExpiredReservations() {
